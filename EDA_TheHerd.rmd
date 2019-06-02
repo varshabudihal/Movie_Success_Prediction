@@ -1,0 +1,342 @@
+---
+title: "Exploratory Data Analysis on Movie Dataset"
+author: "The Herd - Jan Anders, Varsha Budihal, Shraddha Bhvarsar, Rachel Gonzales"
+date: "April, 2019"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(lattice)
+```
+
+### This document features all analysis we have conducted on our dataset, even if the results were not included in our paper due to it getting to long. There sometimes is some commentary on the results, however, we want to refer to the paper for more explanations.
+
+# Intro
+
+We will first import the data and make a few checks, before we start our analysis. Also, we will add the column "profit"
+
+```{r}
+movies <- read.csv("C:/Users/Admin/Documents/movies.csv")
+movies <- movies %>% mutate(profit = gross - budget)
+str(movies)
+head(movies)
+anyNA(movies)
+
+```
+
+Looking at the budgets, we can see that many movies have a budget of 0. This is very strange, as you cannot produce a movie with no budget. As there is no way for us to investigate why these movies have a listed budget of zero, we will remove all movies with the budget 0 from the dataset. Another way of dealing with this issue would be to replace the budget with the average of the genre, but as a large portion of the data is missing, we choose not to.
+```{r}
+movies <- movies %>% filter(budget != 0)
+
+data.frame(variable = c("budget", "gross", "runtime", "score", "votes", "year", "profit"),
+           min = c(min(movies$budget), min(movies$gross), min(movies$runtime), min(movies$score),
+                   min(movies$votes), min(movies$year), min(movies$profit)),
+           max = c(max(movies$budget), max(movies$gross), max(movies$runtime),
+                   max(movies$score), max(movies$votes), max(movies$year), max(movies$profit)),
+           mean = c(round(mean(movies$budget)), round(mean(movies$gross)), round(mean(movies$runtime)),
+                   round(mean(movies$score)), round(mean(movies$votes)), round(mean(movies$year)), round(mean(movies$profit))),
+           median = c(median(movies$budget), median(movies$gross), median(movies$runtime),
+                   median(movies$score), median(movies$votes), median(movies$year), median(movies$profit)),
+           sd = c(round(sd(movies$budget)), round(sd(movies$gross)), round(sd(movies$runtime),3),
+                   round(sd(movies$score),3), round(sd(movies$votes),3), round(sd(movies$year),3), round(sd(movies$profit))) )
+median(movies$votes)
+```
+This table gives us a first impression.
+
+
+We can see that the data consists of numeric and categorial variables. Most categorical variables have many factors, only country and genre have far less possible values than there are observations in the dataset. The reason for this is that many descriptive values in the film industry like director or star can take many values. 
+
+By determining the min and max values of the numerical variables we can get a first impression on what values to expect. Plotting  histograms and boxplots is the next step.
+
+```{r}
+movies_by_genre <- movies %>% group_by(genre) %>%
+                   summarise(mean_budget = mean(budget), max_budget = max(budget), min_budget = min(budget),
+                             mean_gross = mean(gross), max_gross = max(gross), min_gross = min(gross), 
+                             mean_profit = mean(profit), max_profit = max(profit), min_profit = min(profit)) %>%
+                   arrange(mean_budget)
+
+ggplot(data = movies_by_genre, aes(y = mean_budget, x = genre)) + geom_bar(stat="identity") + ylab("Average Budget")
+
+ggplot(data = movies_by_genre, aes(y = mean_gross, x = genre)) + geom_bar(stat="identity") + ylab("Average Gross")
+
+ggplot(data = movies_by_genre, aes(y = mean_profit, x = genre)) + geom_bar(stat="identity") + ylab("Average Profit")
+
+```
+By looking at the average, max and min budgets for movies we can see that there are about three genres that tipically have a much higher budget than the other genres, with the genre with the lowest average budget beeing Musical movies. We excluded the genre war movies before, because there were only two observations with a budget of 0.
+
+We want to introduce a name we came up with while doing our analysis, as we often had to refer to Budget, Gross and Profit at the same time. We shortened these three variables into the abbreviation BGP. You will see this name pop up in this file every once in a while. 
+
+
+## Movies by studio
+```{r}
+movies_company <- movies %>% group_by(company) %>% summarise(mean_score = mean(score), mean_budget = mean(budget), mean_gross = mean(gross), number = length(name)) %>% arrange(desc(mean_budget)) %>% filter(number > 6)
+
+movies_company %>% select(company, mean_score) %>% arrange(desc(mean_score))
+movies_company %>% select(company, mean_budget, mean_gross) %>% arrange(desc(mean_gross)) %>% head()
+movies_company %>% select(company, number) %>% arrange(desc(number))
+```
+
+## Most liked movie and director
+
+```{r}
+str(movies)
+movies %>% arrange(desc(score)) %>% select(name, director, score, gross) %>% head()
+movies %>% arrange(desc(gross)) %>% select(name, director, score, gross) %>% head()
+```
+The Shawshank redenption seems to be the most liked movie to date. there is a large gap between this movie and all following ones. The Dark Knight follows in second place, with Schindlers List, Pulp Fiction and Lotr:Return of the King shared the thirs spot.
+According to our incomplete dataset, Star Wars, Avatar, and Jurassic World have been the most grossing movies in our dataset. This does not reflect the current reality, but as we are just looking at our dataset, this is our conclusion.
+
+
+## Analysis by company
+```{r}
+movies %>% group_by(company) %>% summarize(revenue = mean(gross-budget), score = mean(score), number = length(name)) %>% arrange(desc(revenue)) %>% head()
+
+movies %>% group_by(company) %>% summarize(score = mean(score), number = length(name)) %>% arrange(desc(score)) %>% head()
+
+movies %>% group_by(company) %>% summarize(score = mean(score), number = length(name)) %>% filter(number > 2) %>% arrange(desc(score)) %>% head()
+
+movies %>% group_by(company) %>% summarize(revenue = mean(gross-budget), score = mean(score), number = length(name)) %>% filter(number > 2) %>% arrange(desc(revenue)) %>% head()
+
+```
+
+## Most popular stars and directors
+
+```{r}
+movies %>% group_by(star) %>% filter(n() > 4) %>% summarize(mean_budget = mean(budget)) %>% arrange(desc(mean_budget)) %>% head(5)
+
+movies %>% group_by(star) %>% filter(n() > 4) %>% summarize(mean_gross = mean(gross)) %>% arrange(desc(mean_gross)) %>% head(5)
+
+movies %>% group_by(star) %>% filter(n() > 4) %>% summarize(mean_profit = mean(profit)) %>% arrange(desc(mean_profit)) %>% head(5)
+
+# Now we repeat the same for the director
+
+movies %>% group_by(director) %>% summarize(observations = n(), mean_budget = mean(budget)) %>% filter(observations > 1) %>% arrange(desc(mean_budget)) %>% head(5)
+
+movies %>% group_by(director) %>% summarize(observations = n(), mean_gross = mean(gross)) %>% filter(observations > 1) %>% arrange(desc(mean_gross)) %>% head(5)
+
+movies %>% group_by(director) %>% summarize(observations = n(), mean_profit = mean(profit)) %>% filter(observations > 1) %>% arrange(desc(mean_profit)) %>% head(5)
+
+```
+
+## Analysis by director (Not included in the paper)
+```{r}
+movies %>% group_by(director) %>% summarize(revenue = mean(gross-budget), score = mean(score), number = length(name)) %>% arrange(desc(revenue)) %>% head()
+
+movies %>% group_by(director) %>% summarize(score = mean(score), number = length(name)) %>% arrange(desc(score)) %>% head()
+
+movies %>% group_by(director) %>% summarize(score = mean(score), number = length(name)) %>% filter(number > 2) %>% arrange(desc(score)) %>% head()
+
+movies %>% group_by(director) %>% summarize(revenue = mean(gross-budget), score = mean(score), number = length(name)) %>% filter(number > 2) %>% arrange(desc(revenue)) %>% head()
+
+```
+Time Miller is the most profitable director, closely followed by George Lucas. It is noticable that all very profitable directors do not have many entries in the dataset. More reknown directors like Cameron or Spielberg are also more likely to have produced movies that didn't do so well in the box offic, which lowers their average drastically, leaving the best spots to less known directors (with the exception of George Lucas) . 
+The most successful director based on movie rating is Roberto Benigni, followd by Tony Kaye. If we only accept Directors with 3 or more movies in the dataset, Christopher Nolan has the top spot, followed by Pete Doctor and Quentin Tarantino, all well known names in the movie industry.
+If we only accept Directors with a minimum of 3 movies, the highest grossing director is George Lucas, followed by Joss Wheadon and James Cameron.
+
+
+# Most interesting findings:
+
+## Relation between BGP and Runtime
+```{r}
+
+xyplot(budget~runtime, data=movies)
+xyplot(profit~runtime, data=movies)
+xyplot(gross~runtime, data=movies)
+
+xyplot(budget+profit+gross~runtime, data=movies)
+#xyplot(runtime~budget, data=movies)
+
+movies2= movies%>%mutate(runtimeintens=floor(runtime/10))%>%group_by(runtimeintens)%>%
+  summarize(budgetmean=mean(budget),
+            profitmean=mean(profit),
+            grossmean=mean(gross),
+            scoremean = mean(score),
+            number = n())
+xyplot(budgetmean+profitmean+grossmean~runtimeintens, data=movies2)
+
+ggplot(data = movies2, aes (x = runtimeintens)) + 
+  geom_line(aes(y = budgetmean, color = "Budget")) + 
+  geom_line(aes(y = profitmean, color = "Profit")) + 
+  geom_line(aes(y =grossmean, color = "Gross")) + 
+  ylab("Budget, Gross and Profit") + xlab("Runtime in 10 minute intervals") + 
+  scale_x_continuous(breaks = round(seq(min(movies2$runtimeintens), max(movies2$runtimeintens), by = 1),1))
+
+# As the runtime is normally distributed, we will get rid of the very low and high values, as they would consist of only one or two movies each and do not represent the data sccurately
+ggplot(data = movies2 %>% filter(number > 10), aes (x = runtimeintens)) + 
+  geom_line(aes(y = budgetmean, color = "Budget")) + 
+  geom_line(aes(y = profitmean, color = "Profit")) + 
+  geom_line(aes(y =grossmean, color = "Gross")) + 
+  ylab("Budget, Gross and Profit") + xlab("Runtime in 10 minute intervals") + 
+  scale_x_continuous(breaks = round(seq(min(movies2$runtimeintens), max(movies2$runtimeintens), by = 1),1))
+
+ggplot(data = movies2 %>% filter(number > 5), aes (x = runtimeintens)) + 
+  geom_line(aes(y = scoremean, color = "Average Score")) + 
+  ylab("Average Score") + xlab("Runtime in 10 minute intervals") + 
+  scale_x_continuous(breaks = round(seq(min(movies2$runtimeintens), max(movies2$runtimeintens), by = 1),1))
+
+```
+
+
+## Relation between score and BGP
+```{r}
+#Reducing dataset size for easier visibility in exploratory plotting
+movies2 = movies %>% sample_frac(0.1) 
+
+xyplot(budget~score, data=movies2)
+xyplot(profit~score, data=movies2)
+xyplot(gross~score, data=movies2)
+
+xyplot(budget+profit+gross~score, data=movies2)
+
+movies3= movies %>% mutate(scoreround=round(score*2)/2)%>%
+  group_by(scoreround)%>%summarize(budgetmean=mean(budget),
+                                   profitmean=mean(profit),
+                                   grossmean=mean(gross), 
+                                   number = n())
+
+ggplot(data = movies3, aes (x = scoreround)) + 
+  geom_line(aes(y = budgetmean, color = "Budget")) + 
+  geom_line(aes(y = profitmean, color = "Profit")) + 
+  geom_line(aes(y =grossmean, color = "Gross")) + 
+  ylab("Budget, Gross and Profit") + xlab("Score") + 
+  scale_x_continuous(breaks = round(seq(min(movies3$scoreround), max(movies3$scoreround), by = 0.5),1))
+
+```
+
+
+
+
+## Genre-Runtime analysis
+```{r}
+movies_runtime <- movies %>% group_by(genre) %>% summarise(mean_runtime = mean(runtime))
+                             
+ggplot(data = movies, aes(y=runtime)) + geom_point(aes(x=genre))
+
+ggplot(data = movies, aes(x=runtime)) + geom_histogram() + facet_wrap(movies$genre)
+
+ggplot(data = movies_runtime, aes(y = mean_runtime, x = genre)) + geom_bar(stat="identity") + ylab("Average Runtime")
+```
+
+
+## The more movies you make, the higher the BGP? (directors - stars - BGP)
+```{r}
+movies_by_amount_director <- movies %>% group_by(director) %>%
+                             summarize(amount = n(),
+                                       mean_budget = mean(budget),
+                                       mean_gross = mean(gross),
+                                       mean_profit = mean(profit)) %>%
+                             group_by(amount) %>%
+                             summarize(mean_budget = mean(mean_budget),
+                                       mean_gross = mean(mean_gross), 
+                                       mean_profit = mean(mean_profit))
+
+movies_by_amount_stars <- movies %>% group_by(star) %>%
+                          summarize(amount = n(),
+                                    mean_budget = mean(budget),
+                                    mean_gross = mean(gross),
+                                    mean_profit = mean(profit)) %>%
+                          group_by(amount) %>%
+                          summarize(mean_budget = mean(mean_budget),
+                                    mean_gross = mean(mean_gross),
+                                    mean_profit = mean(mean_profit))
+
+
+ggplot(data = movies_by_amount_director, aes(amount)) +
+  geom_point(aes(y = mean_budget, color = 'red')) +
+  geom_point(aes(y = mean_gross, color = 'blue')) +
+  geom_point(aes( y = mean_profit, color = 'green'))
+
+ggplot(data = movies_by_amount_stars, aes(amount)) +
+  geom_line(aes(y = mean_budget, color = 'red')) +
+  geom_line(aes(y = mean_gross, color = 'blue')) +
+  geom_line(aes( y = mean_profit, color = 'green'))
+```
+
+The result definetely has a lost of unexplanable noise associated with it, but we can also see that for the first ten movies a star or director makes, this is definetely true. We will again plot this by filtering out all other results.
+
+```{r}
+
+# Now for only the first ten observations, as there arent many datapoints for the directors or stars
+#  that have made more than 10 movies
+
+ggplot(data = movies_by_amount_director %>% filter(amount <10), aes(amount)) +
+  geom_line(aes(y = mean_budget, color = 'Budget')) +
+  geom_line(aes(y = mean_gross, color = 'Gross')) +
+  geom_line(aes( y = mean_profit, color = 'Profit')) + 
+  ggtitle("Sucess of movies in relation to the amount of movies of a director") +
+  ylab("") + xlab("Amount of movies a director has made")
+
+ggplot(data = movies_by_amount_stars %>% filter(amount <10), aes(amount)) +
+  geom_line(aes(y = mean_budget, color = 'Budget')) +
+  geom_line(aes(y = mean_gross, color = 'Gross')) +
+  geom_line(aes( y = mean_profit, color = 'Profit')) +
+  ggtitle("Sucess of movies in relation to the amount of movies with the same star") +
+  ylab("") + xlab("Amount of movies with the same star")
+
+
+```
+
+Looking at these plots, we can definetely see a clear relationship between the amount of budget and income a movie has and the amount of movies the 1. director and 2. star has already made. There also seems to be a relationship between the budget and the gross the movie ends up making, as the Budget and Gross line generally follow the same path. As these lines still have some noise, we must conclude that some very high grossing movies (outliers), influenced our outcome.
+
+
+
+## Popular Genres by year and decade:
+
+To be able to analyse the genres by decade, we wanted to get the most popular genres first, so the plot would remain understandable
+```{r}
+movies_best_genres <- movies %>% filter(genre %in% as.character((movies %>% group_by(genre) %>% summarize(number = n()) %>% filter(number > 250))$genre))
+
+movies_genre <- movies_best_genres %>% mutate(halfDecade = year - year %% 5 ) %>%
+                group_by(halfDecade, genre) %>% summarize(number = n(), mean_score = mean(score),
+                                                          mean_gross = mean(gross), mean_budget = mean(budget))
+  
+ggplot(data = movies_genre, aes(x = halfDecade, color=genre)) +
+       geom_line(aes(y=mean_gross)) + ylab("Average Gross") + xlab("Every 5 years")
+ggplot(data = movies_genre, aes(x = halfDecade, color=genre)) +
+       geom_line(aes(y=mean_budget)) + ylab("Average Budget") + xlab("Every 5 years")
+ggplot(data = movies_genre, aes(x = halfDecade, color = genre)) +
+       geom_line(aes(y=mean_score))+ ylab("Average Score") + xlab("Every 5 years")
+
+ggplot(data = movies %>% filter(genre %in% as.character((movies %>% group_by(genre) %>% 
+                                                         summarize(number = length(name)) %>% 
+                                                         filter(number > 250))$genre)) %>% 
+              group_by(genre, year) %>% summarize(number = length(name)),
+       aes(x = year, color = genre)) +
+       geom_line(aes(y=number)) + ylab("Number of movies per genre") + xlab("Year")
+```
+
+
+# Analysis using linear regression
+```{r}
+summary(lm(data = movies, formula = gross ~ budget))
+summary(lm(data = movies, formula = gross ~ genre))
+summary(lm(data = movies, formula = gross ~ score))
+summary(lm(data = movies, formula = gross ~ runtime))
+summary(lm(data = movies2, formula = gross ~ rating))
+
+summary(lm(data = movies, formula = score ~ year))
+summary(lm(data = movies, formula = score ~ rating))
+summary(lm(data = movies, formula = score ~ budget))
+summary(lm(data = movies, formula = score ~ gross))
+summary(lm(data = movies, formula = score ~ runtime))
+
+summary(lm(data = movies, formula = budget ~ score))
+
+
+
+```
+We can see that the relationship between the gross of a movie and its budget is highly significant.
+We have p-values which are essentially 0, with an intercept of 590 000 and a coefficient of 1.12. This means that for every one dollar increase in budget, we can expect the gross to be higher by 1.12 dollars, which results in a return on investment of 12%.
+
+```{r}
+pairs(movies)
+```
+
+
+

@@ -1,0 +1,365 @@
+---
+title: "PojectII"
+author: "Jan Anders, Varsha Budihal, Rachel Gonzales, Shraddha Bhvarsar"
+date: "April 29, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(randomForest)
+library(xgboost)
+library(ggplot2)
+
+```
+
+Setting up the normalization function
+```{r}
+normalize <- function(x){
+  ((x-min(x)) / (max(x) - min(x)))
+}
+```
+
+
+Reading in the original dataset and reapplying the data cleaning done in P1.
+```{r}
+#movies_orig <- read.csv("") # Enter valid location of the data file here
+
+movies_orig <- movies_orig %>% filter(budget != 0)
+
+#making sure all categorical variables are encoded as character
+movies <- movies_orig %>% mutate(writer = as.character(writer), star = as.character(star), rating = as.character(rating),
+                            director = as.character(director), country = as.character(country), company = as.character(company))
+```
+
+
+Tranforming the variables for better predictions and conversion. Two versions of transformation were tried, with a normal
+min-max transformation not doing the trick.
+```{r}
+
+hist(movies_orig$gross)
+hist(movies_orig$score)
+
+# We will try to match the distribution of the gross variable with the distr. of the score variable.
+
+movies_norm <- movies %>% mutate(gross = normalize(gross), runtime = normalize(runtime), score = normalize(score), budget = normalize((budget)))
+
+# Terrible distributions, that's why we log-transform the gross and budget variables
+# This makes interpretation harder though.
+hist(movies$budget)
+
+hist(movies_norm$budget)
+hist(movies_norm$gross, 200)
+hist(movies_norm$runtime)
+hist(movies_norm$score)
+
+# Log transforming the variables
+movies_norm_log <- movies %>% ungroup() %>% mutate(gross = normalize(log(gross)),
+                                     runtime = normalize(runtime),
+                                     score = normalize(score),
+                                     budget = normalize(log(budget)))
+
+dist_frame_gross <- data.frame(gross = movies_norm$gross, x = "Normalized") %>%
+          rbind(data.frame(gross = movies_norm_log$gross, x = "Log-Transformed"))
+  
+dist_frame_budget <- data.frame(budget = movies_norm$budget, x = "Normalized") %>%
+          rbind(data.frame(budget = movies_norm_log$budget, x = "Log-Transformed"))
+
+ggplot(data = dist_frame_gross, aes(fill = x)) +
+  geom_histogram(aes(x= gross), binwidth =0.025, position = "identity", alpha = 0.75) + 
+  ggtitle("Distribution of the gross - before and after normalization") + xlim(c(0,1)) +
+  xlab("Normalized and log-transformed gross") + ylim(0, 800)
+
+ggplot(data = dist_frame_budget, aes(fill = x)) +
+  geom_histogram(aes(x= budget), binwidth =0.025, position = "identity", alpha = 0.75) + 
+  ggtitle("Distribution of the budget - before and after normalization") + xlim(c(0,1)) +
+  xlab("Normalized and log-transformed budget") + ylim(0, 800)
+
+ggplot(data = movies_norm_log) +
+  geom_histogram(aes(x= score), binwidth = 0.013, position = "identity", alpha = 0.75, fill = "lightseagreen") + 
+  ggtitle("Distribution of the IMDB score") + xlim(c(0,1)) +
+  xlab("Score - min-max normalized") + ylim(0, 250)
+
+movies <- movies_norm_log
+
+```
+
+Feature engineering
+```{r}
+# It would be better to get the amount of movies that a star/director/company/writer has produced until the date of the observation
+# but we were not able to find out how to do that. This will do fine as well
+actor_number <- movies %>% group_by(star) %>% summarize(actor_n = n())
+director_number <- movies %>% group_by(director) %>% summarize(director_n = n())
+company_number <- movies %>% group_by(company) %>% summarize(company_n = n())
+writer_number <- movies %>% group_by(writer) %>% summarize(writer_n = n())
+country_number <- movies %>% group_by(country) %>% summarize(country_n = n())
+
+
+# Joining in the newly created features
+movies <- movies %>% inner_join(actor_number, by = c("star")) %>%
+           inner_join(director_number, by = c("director")) %>%
+           inner_join(company_number, by = c("company")) %>%
+           inner_join(writer_number, by = c("writer")) %>%
+           inner_join(country_number, by = c("country"))
+
+# We could also think about encoding the coutry variable as dummy, as it only contains 41 factors, which is quite a lot.
+# The function lm does that automatically though, if we find significant impacts of one country,
+# we might just create one variable for this one value. The same goes for "rating" and "genre".
+```
+
+Creating the dependent variable as the product of the 0-1 normal-transformed score and gross. 
+Another variable that could serve as dependent variable is the difference between the two, signifying the 
+difference in economic and audience reception of the movie.
+```{r}
+# Adding one so the dependent variable is never below 1 and therefore messes up MSE calculation
+movies <- movies %>% mutate(success = 1 + gross + score, success_diff = gross - score, success_abs_diff = abs(gross - score))
+
+str(movies)
+```
+We can see that there are a total of x variables in the dataset. Some of them can't be used for linear regression due to 
+too many factors.
+
+We reduce the dataset to only the important variables
+```{r}
+movies <- movies %>% select(gross, score, success, success_diff, year, budget, country, rating, genre, runtime, votes, actor_n, director_n, company_n, writer_n, country_n)
+```
+
+
+
+The following code is trying to find the best model using a forward selection approach:
+```{r}
+model <- lm(data = movies, success ~ year + budget)
+summary(model)
+
+```
+
+```{r}
+model2 <- lm(data = movies, success ~ year + budget + actor_n + director_n)
+summary(model2)
+```
+
+how many votes from which country due to which actor contributed to the success of a movie?
+```{r}
+model3 <- lm(data=movies, success ~ year + budget + actor_n + director_n + writer_n + country_n + rating)
+summary(model3)
+```
+
+```{r}
+model4 <- lm(data=movies, success ~ year + budget + actor_n + director_n + writer_n + country_n + runtime + genre)
+summary(model4)
+```
+
+
+Creating dummy variables for the most important genres and rating.
+```{r}
+movies <- movies %>% filter(genre != "Western") %>% mutate(genre_Crime = ifelse(genre == "Crime", 1, 0),
+                                                           genre_Drame = ifelse(genre == "Drama", 1, 0),
+                                                           genre_Animation = ifelse(genre == "Animation", 1, 0),
+                                                           genre_Biography = ifelse(genre == "Biography", 1, 0),
+                                                           genre_Comedy = ifelse(genre == "Comedy", 1, 0),
+                                                           genre_Adventure = ifelse(genre == "Adventure", 1, 0),
+                                                           rating_r = ifelse(rating == "R", 1, 0),
+                                                           rating_pg13 = ifelse(rating == "PG-13", 1, 0),
+                                                           rating_pg = ifelse(rating == "PG", 1, 0))
+
+
+# Exporting the finished dataset
+#write.csv(movies, "")
+
+```
+
+
+The best model we were able to find using linear regression, now using test and training data.
+The used variables are all statistically significant with a pvalue of at least < 0.05.
+The Adjusted RSquared is 32%.
+```{r}
+set.seed(42)
+train <- movies %>% sample_frac(0.8)
+test <- movies %>% anti_join(train)
+
+lin_model <- lm(data = train, success ~ budget + runtime + genre_Adventure +
+                                    genre_Animation + genre_Biography +
+                                    actor_n + writer_n + director_n +
+                                    company_n)
+summary(lin_model)
+
+
+# Visualizing (parts of) the model
+
+ggplot(data=movies %>% filter(budget > 0.4), aes(x = budget, y = success )) + geom_point(alpha = 0.7, size = 1) + geom_smooth(method = lm, size = 2) + ggtitle("Relationship between success and the budget of a movie")
+
+ggplot(data=movies %>% filter(company_n > 2), aes(x = log(company_n), y = success )) + geom_point(alpha = 0.7, size = 1) + geom_smooth(method = lm, size = 2) + ggtitle("Relationship between success and the \namount of movies produced by the company")
+
+plot(movies %>% sample_frac(0.3) %>% select(success, budget, year, runtime, actor_n, director_n, company_n, country_n))
+
+# Still need to construct the plane variable
+#p <- plot_ly(data = movies, z = ~success, x = ~budget, y =~runtime) %>% add_markers()
+#p %>% add_surface(z = ~plane, x = ~budget, y = ~runtime) %>%
+#  layout(showlegend = T)
+```
+
+We wrote a function to calculate the most important measures to be able to tell the performance of model more quickly
+while fitting:
+```{r}
+# Outputs the most important evaluative scores to the console
+# MAE: MEAN ABSOLUTE ERROR. The lower the better.
+# RMSE : ROOT MEAN SQUARED ERROR. The lower the better, best is 1, should at least be 0.5
+# MSE: MEAN SQUARED ERROR. The closer to 0 the better. Can (and should be!) very small. Most important measure for model bias.
+# MAPE: MEAN ABSOLUTE PERCENTAGE ERROR. Lower the better
+# MPE: MEAN PERCENTAGE ERROR. closer to 0 the better.  Should be very close to 0, same as MSE.
+# R Squared: The higher the better, best being 1.
+
+KPI <- function(actual, pred, MSE = TRUE, RMSE = TRUE, MAE = TRUE, MAPE = FALSE, MPE = FALSE, RSquared = TRUE){
+  frame <- data.frame(a = actual, p = pred) %>% mutate(diff = a-p, absdiff = abs(a-p), 
+                                                       percdiff = diff/a, percabsdiff = absdiff/a) %>%
+    mutate(percdiff = ifelse(is.finite(percdiff), percdiff, 0),
+           percabsdiff = ifelse(is.finite(percabsdiff), percabsdiff, 0))
+  resframe <- data.frame(Measure=0)
+  if(MSE) {
+    kpi1 = mean(frame$diff)
+    resframe <- resframe %>% cbind(MSE = kpi1)
+  }
+  if(RMSE){
+    kpi2 = sqrt(mean(frame$diff * frame$diff))
+    resframe <- resframe %>% cbind(RMSE = kpi2)
+  }
+  if(MAE){
+    kpi3 = mean(frame$absdiff)
+    resframe <- resframe %>% cbind(MAE = kpi3)
+  }
+  if(RSquared){
+    kpi4 = cor(actual, pred) ^ 2
+    resframe <- resframe %>% cbind(RSquared = kpi4)
+  }
+  if(MAPE){
+    kpi5 = mean(frame$percabsdiff)
+    resframe <- resframe %>% cbind(MAPE = kpi5)
+  }
+  if(MPE){
+    kpi6 = mean(frame$percdiff)
+    resframe <- resframe %>% cbind(MPE = kpi6)
+  }
+  return(resframe)
+}
+
+```
+
+Applying the KPI function to the best linear model yields:
+RMSE 0.162
+MAPE  5.4%
+MPE -0.5 %
+These results are good. The mean absolute error is 0.1, on a range of the dependent variable of 1.57 (1.35, 2.92) 
+
+The qq-plot is almost straight, showing that the residuals are almost normally distributed,
+which can also be seen in the histogram
+```{r}
+linear_model_predictions <- data.frame(act = test$success, pred = predict(lin_model, test))
+
+KPI(linear_model_predictions$act, linear_model_predictions$pred, MAPE = T, MPE = T, MSE = T)
+
+#determining the range of the success variable
+max(movies$success)-min(movies$success)
+
+# Plotting the model and residuals
+ggplot(data = linear_model_predictions, aes(x= pred, y = act)) + geom_point() + ggtitle("Actual versus fitted of the linear model") + xlim(c(1.3,3)) + ylim(c(1.3,3))
+cor(linear_model_predictions$act,linear_model_predictions$pred )
+
+qqnorm(model$residuals)
+ggplot(data = data.frame(Residuals=model$residuals), aes(x= Residuals)) + geom_histogram(binwidth =0.03) + ggtitle("Distribution of the residuals of the linear model") + xlim(c(-0.75,0.75))
+
+```
+
+
+Applying a random forest model, which performs similarly to the linear regression
+R2 -> 3%
+MAPE -> 5.8%
+MPE -> -0.5%
+```{r}
+set.seed(100)
+# original code replaced to enable comparability
+#train <- sample(nrow(movies), 0.7 * nrow(movies), replace = FALSE)
+#TrainSet <- movies[train,]
+#ValidSet <- movies[-train,]
+#summary(TrainSet)
+#summary(ValidSet)
+
+forest_model <- randomForest(success ~ budget + runtime + genre_Adventure + genre_Animation + genre_Biography +
+                                    actor_n + writer_n + director_n + company_n,
+                             data = train,ntree=500, mtry=6, importance = TRUE)
+summary(forest_model)
+
+
+# Predicting on validation set
+predValid <- predict(forest_model, test, type = "class")
+
+forest_model_predictions <- data.frame(act = test$success, pred = predValid)
+  
+ggplot(data = forest_model_predictions, aes(x= pred, y = act)) + geom_point() + ggtitle("Actual versus fitted of the forest model") + xlim(c(1.3,3)) + ylim(c(1.3,3))
+
+# Checking accuracy
+KPI(a = forest_model_predictions$act, p = forest_model_predictions$pred, MAPE = T, MPE = T) 
+```
+
+
+And a xgBoost model, which resulted in the best results:
+R2 -> 0.33 (suspiciously good)
+MAPE -> 5.8%
+MPE -> 0.8%
+These values make the assumption that the model probably overfitted quite likely, however, 
+the model was trained on a different dataset than it was tested on.
+```{r}
+# Learning rate of 0.2 and maximum tree depth of 5. Other pruning parameters left to standard, as this is just a test.
+#feature_list <- c("success", "budget", "company", "country", "director", "genre", "rating", "released", "runtime",
+                 # "star", "writer", "actor_n", "writer_n", "director_n", "company_n", "country_n")
+feature_list <- c("success", "budget", "runtime", "actor_n", "writer_n", "director_n", "company_n", "country_n")
+prediction_variable <- "success"
+par <- list(eta = 0.2, max_depth = 5)
+
+# Original code replaced for comparability
+#train.data <- movies %>% select(feature_list) %>% sample_frac(0.8)
+#test.data <- movies %>% select(feature_list) %>% anti_join(train.data)
+
+train.data <- train %>% select(feature_list)
+test.data <- test %>% select(feature_list)
+
+matrix.train <- data.matrix(train.data %>% select(-prediction_variable))
+matrix.test <- data.matrix(test.data %>% select(-prediction_variable))
+
+train <- xgb.DMatrix(matrix.train, label = train.data$success)
+
+# 300 rounds were found to produce the best results
+xgb_model <- xgb.train(params = par, data = train, nrounds = 350)
+prediction <- predict(xgb_model, matrix.test)
+
+xgb_model_predictions <- test.data %>% select(prediction_variable) %>% mutate(pred = prediction, act = success)
+KPI(actual = xgb_model_predictions$success, pred = xgb_model_predictions$pred, MAPE = T, MPE = T)
+
+
+ggplot(data = xgb_model_predictions, aes(x= pred, y = act)) + geom_point() + ggtitle("Actual versus fitted of the xgb model") + xlim(c(1.3,3)) + ylim(c(1.3,3))
+
+```
+
+
+Predicting marvel`s Endgame movie success (~3.05 (and 2.98) at the time of writing this using the best linear model)
+and making a final comparison plot for fun. We can see that randomForest and xgb look more alike, which makes sense. Linear regression does not predict values under a certain threshold, whereas the other two models go far below with their predictions.
+Still, there is a lot of room for improvement.
+```{r}
+predict(lin_model, data.frame(budget = 1 , genre_Animation = 0, genre_Adventure = 1,
+                          genre_Horror = 0, genre_Biography = 0, genre_Comedy = 0,
+                          director_n = 0, actor_n = 14, writer_n = 5 , company_n = 7,
+                          runtime = 1, country_n = 3726))
+
+
+#comparing all three models:
+
+#all_pred_frame <- data.frame(actual_lm = linear_model_predictions$act, pred_lm = linear_model_predictions$)
+
+ggplot() + geom_point(data = linear_model_predictions, aes(x = pred, y = act), color = "blue", alpha = 0.6) + 
+           geom_point(data = forest_model_predictions, aes(x = pred, y = act), color = "red", alpha = 0.5) +
+           geom_point(data = xgb_model_predictions, aes(x = pred, y = act), color = "green", alpha = 0.4) +
+           xlim(c(1.3,3)) + ylim(c(1.3,3)) + xlab("Prediction") + ylab("Actual Value") + 
+           ggtitle("Comparison between linear regression(blue), random forest(red) and xgb(green)")
+
+```
