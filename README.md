@@ -5,4 +5,4 @@ Used “R” programming language to train and test the data with 80-20 ratio
 Also, predicted a new movie "Endgame" which gave us a result of 2.98(Provided the success variable ranged between 1-3)
 
 For this project, you need to have installed Rstudio. 
-
+In order for you to know more about the project, feel free to open up the PPT. 
